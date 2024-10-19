@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.user import User
 from app.core.security import verify_password, create_access_token, get_password_hash
+from jose import JWTError, jwt
+from app.core.config import settings
 
 router = APIRouter()
 

@@ -7,7 +7,7 @@ from app.api.auth import get_current_user
 
 router = APIRouter()
 
-@router.post("/users/init")
+
 def create_initial_user(username: str, password: str, db: Session = Depends(get_db)):
     if db.query(User).first():
         raise HTTPException(status_code=400, detail="Initial user already exists")
@@ -21,3 +21,6 @@ def update_user(password: str, current_user: User = Depends(get_current_user), d
     current_user.hashed_password = get_password_hash(password)
     db.commit()
     return {"message": "User updated successfully"}
+
+
+## uvicorn main:app --port "8000" --reload

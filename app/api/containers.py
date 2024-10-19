@@ -14,38 +14,48 @@ class ContainerCreate(BaseModel):
     name: str
     db_type: str
     env: Dict[str, str]
-
 @router.post("/containers")
-def create_container(container: ContainerCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    free_ports = docker_service.get_free_ports(8000)
-    if not free_ports:
-        raise HTTPException(status_code=500, detail="No free ports available")
-    
-    port = free_ports[0]
-    
+def create_container(container_data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Extract necessary fields from the container data
+    name = container_data.get("name")
+    db_type = container_data.get("db_type")
+    port = container_data.get("user_port", 27017)  # Default port if not provided
+    internal_port = container_data.get("internal_port", 27017)  # Default internal port
+    env_vars = container_data.get("env_vars", {})
+
+    # Ensure necessary fields are present
+    if not name or not db_type or not env_vars:
+        raise HTTPException(status_code=400, detail="Missing required fields: 'name', 'db_type', or 'env_vars'")
+
+    # Create the container record in the database with 'creating' status
     db_container = Container(
-        name=container.name, 
-        db_type=container.db_type, 
+        name=name,
+        db_type=db_type,
         status="creating",
-        env=container.env,
+        env=env_vars,
         port=port
     )
     db.add(db_container)
     db.commit()
-    
+
     try:
-        docker_service.create_container(container.name, container.db_type, container.env, port)
+        # Create the Docker container using the provided details
+        docker_service.create_container(name, db_type, env_vars, internal_port)
+
+        # Update container status to 'running' and generate the connection string
         db_container.status = "running"
-        db_container.connection_string = generate_connection_string(container.db_type, container.env, port)
+        db_container.connection_string = generate_connection_string(db_type, env_vars, port)
         db.commit()
     except Exception as e:
+        # If there's an error, mark the container status as 'failed'
         db_container.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+    # Return the container details after creation
     return {
-        "id": db_container.id, 
-        "name": db_container.name, 
+        "id": db_container.id,
+        "name": db_container.name,
         "status": db_container.status,
         "connection_string": db_container.connection_string
     }
@@ -103,14 +113,3 @@ def get_free_ports(port: int, current_user: User = Depends(get_current_user)):
     free_ports = docker_service.get_free_ports(port)
     return {"free_ports": free_ports}
 
-def generate_connection_string(db_type: str, env: dict, port: int) -> str:
-    if db_type == "mongodb":
-        return f"mongodb://{env.get('MONGO_INITDB_ROOT_USERNAME')}:{env.get('MONGO_INITDB_ROOT_PASSWORD')}@{settings.domain}:{port}"
-    elif db_type == "postgres":
-        return f"postgresql://{env.get('POSTGRES_USER')}:{env.get('POSTGRES_PASSWORD')}@{settings.domain}:{port}/{env.get('POSTGRES_DB')}"
-    elif db_type in ["mysql", "mariadb"]:
-        return f"mysql://{env.get('MYSQL_USER')}:{env.get('MYSQL_PASSWORD')}@{settings.domain}:{port}/{env.get('MYSQL_DATABASE')}"
-    elif db_type == "redis":
-        return f"redis://:{env.get('REDIS_PASSWORD')}@{settings.domain}:{port}"
-    else:
-        raise ValueError(f"Unsupported database type: {db_type}")
